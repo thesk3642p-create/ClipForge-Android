@@ -20,7 +20,7 @@ Open the repository's **Releases** page and download `ClipForge-debug.apk`. On A
 
 ## Source and build
 
-The complete Android Studio project is available as [ClipForge-Android-project.zip](ClipForge-Android-project.zip). Download and extract it; the extracted folder contains all app source, documentation, and the Gradle wrapper. See [Building and releasing](BUILDING.md) for setup and build instructions.
+The complete Android Studio project is checked in directly at the repository root. Open this folder in Android Studio, or build from it with the included Gradle wrapper. The main source is in `app/`; dependency versions are in `gradle/libs.versions.toml`. See [Building and releasing](BUILDING.md) for setup and build instructions. The [project ZIP](ClipForge-Android-project.zip) remains available as a convenient download.
 
 ## Use the app
 

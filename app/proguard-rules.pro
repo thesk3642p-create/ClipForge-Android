@@ -1,0 +1,5 @@
+-keep class com.yausername.youtubedl_android.** { *; }
+-keep class com.yausername.ffmpeg.** { *; }
+-keep class org.schabi.newpipe.extractor.** { *; }
+-keep class com.clipforge.app.worker.ClipDownloadWorker { *; }
+-keepattributes *Annotation*
