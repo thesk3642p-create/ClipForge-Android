@@ -25,6 +25,7 @@ On macOS/Linux:
 ```sh
 unzip ClipForge-Android-project.zip -d clipforge-source
 cd clipforge-source
+chmod +x gradlew
 ./gradlew assembleDebug
 ```
 
