@@ -2,6 +2,7 @@ package com.clipforge.app.data
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -12,11 +13,13 @@ import com.clipforge.app.data.preferences.VideoQuality
 import com.clipforge.app.domain.parser.Timecode
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
+import com.yausername.youtubedl_android.YoutubeDLException
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantReadWriteLock
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -28,11 +31,33 @@ data class ExportedClip(val uri: Uri, val sizeBytes: Long)
 
 class DownloadEngine(private val appContext: Context) {
     private val initMutex = Mutex()
+    private val updateMutex = Mutex()
     private val engineAccess = ReentrantReadWriteLock()
+    private val enginePreferences: SharedPreferences = appContext.getSharedPreferences(ENGINE_PREFERENCES, Context.MODE_PRIVATE)
     @Volatile private var initialized = false
+    @Volatile private var engineGeneration = 0L
 
     suspend fun initialize() = withContext(Dispatchers.IO) {
-        if (initialized) return@withContext
+        initializeNativeLibraries()
+        updateStableEngineIfDue()
+    }
+
+    suspend fun updateStableEngine(): String = withContext(Dispatchers.IO) {
+        initializeNativeLibraries()
+        updateMutex.withLock {
+            updateStableEngineLocked()
+            val now = System.currentTimeMillis()
+            enginePreferences.edit()
+                .putLong(KEY_LAST_UPDATE_ATTEMPT, now)
+                .putLong(KEY_LAST_SUCCESSFUL_UPDATE, now)
+                .apply()
+            engineGeneration++
+        }
+        "yt-dlp stable engine updated"
+    }
+
+    private suspend fun initializeNativeLibraries() {
+        if (initialized) return
         initMutex.withLock {
             if (initialized) return@withLock
             YoutubeDL.getInstance().init(appContext)
@@ -41,8 +66,27 @@ class DownloadEngine(private val appContext: Context) {
         }
     }
 
-    suspend fun updateStableEngine(): String = withContext(Dispatchers.IO) {
-        initialize()
+    private suspend fun updateStableEngineIfDue() {
+        updateMutex.withLock {
+            val now = System.currentTimeMillis()
+            val lastSuccess = enginePreferences.getLong(KEY_LAST_SUCCESSFUL_UPDATE, 0L)
+            val lastAttempt = enginePreferences.getLong(KEY_LAST_UPDATE_ATTEMPT, 0L)
+            if (now - lastSuccess < ENGINE_UPDATE_INTERVAL_MS || now - lastAttempt < UPDATE_RETRY_INTERVAL_MS) return@withLock
+
+            enginePreferences.edit().putLong(KEY_LAST_UPDATE_ATTEMPT, now).apply()
+            try {
+                updateStableEngineLocked()
+                enginePreferences.edit().putLong(KEY_LAST_SUCCESSFUL_UPDATE, now).apply()
+                engineGeneration++
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                Log.w(TAG, "Automatic yt-dlp update failed; the bundled engine will still be used.", error)
+            }
+        }
+    }
+
+    private fun updateStableEngineLocked() {
         val lock = engineAccess.writeLock()
         lock.lock()
         try {
@@ -50,7 +94,17 @@ class DownloadEngine(private val appContext: Context) {
         } finally {
             lock.unlock()
         }
-        "yt-dlp stable engine updated"
+    }
+
+    private suspend fun updateAfterStaleEngineFailure(generationAtStart: Long) {
+        updateMutex.withLock {
+            if (engineGeneration != generationAtStart) return@withLock
+            val now = System.currentTimeMillis()
+            enginePreferences.edit().putLong(KEY_LAST_UPDATE_ATTEMPT, now).apply()
+            updateStableEngineLocked()
+            enginePreferences.edit().putLong(KEY_LAST_SUCCESSFUL_UPDATE, now).apply()
+            engineGeneration++
+        }
     }
 
     suspend fun downloadSegment(
@@ -90,16 +144,34 @@ class DownloadEngine(private val appContext: Context) {
             kotlin.Unit
         }
         check(shouldContinue()) { "Clip was canceled." }
+        val generationAtStart = engineGeneration
+        try {
+            execute(request, processId, progressCallback)
+        } catch (error: YoutubeDLException) {
+            if (!error.isStaleEngineWarning()) throw error
+            updateAfterStaleEngineFailure(generationAtStart)
+            check(shouldContinue()) { "Clip was canceled." }
+            cacheDirectory.deleteRecursively()
+            check(cacheDirectory.mkdirs() || cacheDirectory.isDirectory) { "Couldn't recreate the private clip cache." }
+            execute(request, processId, progressCallback)
+        }
+        cacheDirectory.listFiles()?.firstOrNull { it.isFile && it.extension.equals("mp4", ignoreCase = true) }
+            ?: throw IllegalStateException("yt-dlp completed without an MP4 segment. Try another quality or source.")
+    }
+
+    private fun execute(request: YoutubeDLRequest, processId: String, progressCallback: (Float, Long, String) -> kotlin.Unit) {
         val lock = engineAccess.readLock()
         lock.lock()
         try {
             YoutubeDL.getInstance().execute(request, processId, progressCallback)
-            cacheDirectory.listFiles()?.firstOrNull { it.isFile && it.extension.equals("mp4", ignoreCase = true) }
-                ?: throw IllegalStateException("yt-dlp completed without an MP4 segment. Try another quality or source.")
         } finally {
             lock.unlock()
         }
     }
+
+    private fun Throwable.isStaleEngineWarning(): Boolean = generateSequence(this) { it.cause }
+        .mapNotNull { it.message }
+        .any { it.contains("older than 90 days", ignoreCase = true) || it.contains("older than 90", ignoreCase = true) }
 
     fun cancel(processId: String) {
         runCatching { YoutubeDL.getInstance().destroyProcessById(processId) }
@@ -148,4 +220,13 @@ class DownloadEngine(private val appContext: Context) {
         .replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_")
         .replace(Regex("\\s+"), "_")
         .trim('_', '.').ifBlank { "Clip" }.take(100)
+
+    companion object {
+        private const val TAG = "ClipForgeEngine"
+        private const val ENGINE_PREFERENCES = "clipforge_engine"
+        private const val KEY_LAST_UPDATE_ATTEMPT = "yt_dlp_last_update_attempt"
+        private const val KEY_LAST_SUCCESSFUL_UPDATE = "yt_dlp_last_successful_update"
+        private const val ENGINE_UPDATE_INTERVAL_MS = 30L * 24L * 60L * 60L * 1000L
+        private const val UPDATE_RETRY_INTERVAL_MS = 12L * 60L * 60L * 1000L
+    }
 }

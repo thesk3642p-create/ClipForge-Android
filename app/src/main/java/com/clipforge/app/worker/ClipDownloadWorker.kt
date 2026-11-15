@@ -76,7 +76,7 @@ class ClipDownloadWorker(
                 return Result.success()
             }
             cache.deleteRecursively()
-            val detail = error.message?.take(240) ?: "Download failed. Check the source and retry."
+            val detail = error.toClipFailureDetail()
             if (runAttemptCount < MAX_RETRIES) {
                 repository.setScheduled(id, this.id.toString(), detail)
                 Result.retry()
@@ -105,6 +105,19 @@ class ClipDownloadWorker(
         val notificationId = clipId?.hashCode()?.and(Int.MAX_VALUE)?.coerceAtLeast(1) ?: FALLBACK_NOTIFICATION_ID
         val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0
         return ForegroundInfo(notificationId, notification, serviceType)
+    }
+
+    private fun Throwable.toClipFailureDetail(): String {
+        val lines = generateSequence(this) { it.cause }
+            .mapNotNull { it.message }
+            .flatMap { it.lineSequence() }
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .toList()
+        val detail = lines.lastOrNull { it.startsWith("ERROR:", ignoreCase = true) }
+            ?: lines.lastOrNull { !it.startsWith("WARNING:", ignoreCase = true) }
+            ?: "Download failed. Check the source and retry."
+        return detail.take(240)
     }
 
     companion object {
