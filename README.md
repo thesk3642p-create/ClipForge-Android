@@ -18,9 +18,9 @@ ClipForge is a native Android workspace for preparing timestamped YouTube B-roll
 
 Open the repository's **Releases** page and download `ClipForge-debug.apk`. On Android, open the downloaded APK and follow the install prompt. This arm64 debug build is signed with Android's development key and is not a Play Store release.
 
-## Build from source
+## Source and build
 
-See [Building and releasing](BUILDING.md) for the JDK, Android SDK, Gradle, build commands, and release process.
+The complete Android Studio project is available as [ClipForge-Android-project.zip](ClipForge-Android-project.zip). Download and extract it; the extracted folder contains all app source, documentation, and the Gradle wrapper. See [Building and releasing](BUILDING.md) for setup and build instructions.
 
 ## Use the app
 
