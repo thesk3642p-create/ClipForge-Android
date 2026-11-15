@@ -3,6 +3,7 @@ package com.clipforge.app.data
 import android.content.ContentValues
 import android.content.Context
 import android.content.SharedPreferences
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -155,8 +156,41 @@ class DownloadEngine(private val appContext: Context) {
             check(cacheDirectory.mkdirs() || cacheDirectory.isDirectory) { "Couldn't recreate the private clip cache." }
             execute(request, processId, progressCallback)
         }
-        cacheDirectory.listFiles()?.firstOrNull { it.isFile && it.extension.equals("mp4", ignoreCase = true) }
-            ?: throw IllegalStateException("yt-dlp completed without an MP4 segment. Try another quality or source.")
+        // yt-dlp can leave per-format files such as segment.f137.mp4 beside the
+        // post-processed output. Those are video-only/audio-only intermediates;
+        // never export whichever MP4 happens to appear first in listFiles().
+        val segment = File(cacheDirectory, "segment.mp4")
+        check(segment.isFile && segment.length() > 0L) {
+            "yt-dlp finished without the merged segment.mp4. The source streams could not be combined."
+        }
+        validateVideoSegment(segment, clip)
+        segment
+    }
+
+    private fun validateVideoSegment(file: File, clip: ClipEntity) {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(file.absolutePath)
+            val hasVideo = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO)
+                ?.equals("yes", ignoreCase = true) == true
+            val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+            val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+            val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            check(hasVideo && width > 0 && height > 0) {
+                "The downloaded MP4 has no playable video stream. Retry the clip or choose a lower quality."
+            }
+            val expectedMs = (clip.endSeconds - clip.startSeconds) * 1_000L
+            val toleranceMs = maxOf(2_000L, expectedMs / 10L)
+            check(durationMs > 0L && kotlin.math.abs(durationMs - expectedMs) <= toleranceMs) {
+                "The downloaded segment is incomplete (${durationMs / 1_000L}s; expected ${expectedMs / 1_000L}s). Retry the clip."
+            }
+        } catch (error: IllegalStateException) {
+            throw error
+        } catch (error: Exception) {
+            throw IllegalStateException("The downloaded MP4 couldn't be opened as a video. Retry the clip.", error)
+        } finally {
+            retriever.release()
+        }
     }
 
     private fun execute(request: YoutubeDLRequest, processId: String, progressCallback: (Float, Long, String) -> kotlin.Unit) {

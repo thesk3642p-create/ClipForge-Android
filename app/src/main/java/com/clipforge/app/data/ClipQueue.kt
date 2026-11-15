@@ -37,7 +37,9 @@ class ClipQueue(context: Context) {
 
     suspend fun enqueueRetry(clipId: String) {
         val clip = repository.getClip(clipId) ?: return
-        if (clip.status !in setOf(ClipStatus.FAILED, ClipStatus.CANCELED)) return
+        // A completed record can be re-downloaded to replace an invalid or
+        // audio-only export while retaining the old file until replacement succeeds.
+        if (clip.status !in setOf(ClipStatus.FAILED, ClipStatus.CANCELED, ClipStatus.COMPLETED)) return
         val request = buildRequest(clipId)
         repository.setScheduled(clipId, request.id.toString(), null)
         workManager.enqueueUniqueWork("retry-$clipId", ExistingWorkPolicy.REPLACE, request)

@@ -102,13 +102,24 @@ fun ClipCard(
                             Spacer(Modifier.width(5.dp))
                             Text("Preview")
                         }
-                        ClipStatus.FAILED, ClipStatus.CANCELED -> TextButton(onClick = onRetry) {
+                        ClipStatus.FAILED, ClipStatus.CANCELED -> if (clip.mediaUri == null) TextButton(onClick = onRetry) {
                             Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(5.dp))
                             Text("Retry")
+                        } else TextButton(onClick = onPreview) {
+                            Icon(Icons.Rounded.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text("Preview previous")
                         }
                         ClipStatus.QUEUED, ClipStatus.SCHEDULED -> Text("Waiting in queue", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         else -> Unit
+                    }
+                    if (clip.status == ClipStatus.COMPLETED || (clip.status == ClipStatus.FAILED && clip.mediaUri != null)) {
+                        TextButton(onClick = onRetry) {
+                            Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(5.dp))
+                            Text(if (clip.status == ClipStatus.COMPLETED) "Re-download" else "Retry")
+                        }
                     }
                     clip.errorMessage?.takeIf { clip.status == ClipStatus.FAILED }?.let {
                         Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))

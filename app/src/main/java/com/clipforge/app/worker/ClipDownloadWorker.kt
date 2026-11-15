@@ -59,7 +59,13 @@ class ClipDownloadWorker(
             }
             val export = engine.exportToMovies(segment, project.name, clip.orderIndex, clip.label)
             val completed = repository.markCompleted(clip.id, export.sizeBytes, export.uri.toString())
-            if (completed == 0) engine.deleteExport(export.uri)
+            if (completed == 0) {
+                engine.deleteExport(export.uri)
+            } else {
+                clip.mediaUri?.let { oldUri ->
+                    if (oldUri != export.uri.toString()) runCatching { engine.deleteExport(android.net.Uri.parse(oldUri)) }
+                }
+            }
             cache.deleteRecursively()
             Result.success()
         } catch (cancelled: CancellationException) {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+- Export only yt-dlp's final merged `segment.mp4`; never select an intermediate format file that may contain audio only or video only.
+- Validate the output video stream and segment duration before publishing it to Movies.
+- Add a re-download action for ready clips so previously exported bad segments can be replaced without deleting the project entry first.
+
 ## 1.0.1
 
 - Automatically refresh the stable yt-dlp engine on first launch and at least every 30 days, with background retry after 12 hours when an update attempt fails.
